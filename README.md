@@ -26,6 +26,8 @@ $ curl -sL https://deb.nodesource.com/setup_4.x | sudo bash -
 $ sudo apt-get install gawk wget git-core diffstat unzip texinfo \
 build-essential chrpath libsdl1.2-dev xterm nodejs bzr
 ```
+For 64bit systems, install this as well: `sudo apt install gcc-multilib g++-multilib`
+
 >**Note:**
 >The steps below will setup your build environment for a development build. If you want to build the latest release use ENV_NAME=stable instead but keep in mind that all new developed features need to go into testing first before they are submitted to stable.
 ```
