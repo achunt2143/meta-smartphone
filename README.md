@@ -71,6 +71,9 @@ $ cd webos-ports
 
 After the build completes, you will find your image in `<build env>/tmp-glibc/deploy/images/${DEVICE_CODENAME}/`
 
+>**NOTE:**
+>If you are getting PermissionError when running on Ubuntu 24.10, run this command `sudo apparmor_parser -R /etc/apparmor.d/unprivileged_userns` outside of your build env. This is a bug in Yocto.
+
 # Installing
 Assuming the build completed without error (it will be obvious when it finishes).
 Once you have built the image, you'll likely want to install it and run it on your device.
