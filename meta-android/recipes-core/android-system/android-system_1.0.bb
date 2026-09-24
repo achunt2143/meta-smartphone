@@ -2,7 +2,7 @@ DESCRIPTION = "System configuration and startup scripts for the Android compatib
 LICENSE = "GPL-3.0-only"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/GPL-3.0-only;md5=c79ff39f19dfec6d293b95dea7b07891"
 
-PR = "r7"
+PR = "r8"
 
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 
@@ -59,6 +59,7 @@ SRC_URI = " \
     file://start-android-hals.sh \
     file://mount-android.sh \
     file://mount-apexes.py \
+    file://mali-kbase-fixup \
     file://lxc-config \
     file://pre-start.sh \
     file://post-stop.sh \
@@ -197,6 +198,7 @@ do_install() {
     install -m 0755 ${UNPACKDIR}/wait-for-android.sh ${D}${bindir}
     install -m 0755 ${UNPACKDIR}/mount-android.sh ${D}${bindir}
     install -m 0755 ${UNPACKDIR}/mount-apexes.py ${D}${bindir}
+    install -m 0755 ${UNPACKDIR}/mali-kbase-fixup ${D}${bindir}
     install -m 0755 ${UNPACKDIR}/start-android-hals.sh ${D}${bindir}
 
     install -d ${D}${localstatedir}/lib/lxc/android
