@@ -54,4 +54,10 @@ lxc.mount.entry = /apex apex bind rbind,optional 0 0
 # under /android is inside the rootfs LXC re-establishes. optional, since only
 # Android 10/11+ devices have them.
 lxc.mount.entry = /odm odm bind bind,optional 0 0
-lxc.mount.entry = /vendor_dlkm vendor_dlkm bind bind,optional 0 0
+# rbind, so a bind mount placed on a file inside /vendor_dlkm comes along with
+# it - a plain bind carries only the mount itself, and the sub-mount is invisible
+# in the container. mount-android.sh relies on this to swap in a patched
+# mali_kbase.ko; without rbind the container's init insmods the stock module and
+# panics the first time anything creates a GPU context. Same reason /apex above
+# is rbind.
+lxc.mount.entry = /vendor_dlkm vendor_dlkm bind rbind,optional 0 0

@@ -238,6 +238,48 @@ try_mount_validated /vendor_dlkm "/etc/build.prop" \
     "/dev/mapper/dynpart-vendor_dlkm" \
     >/dev/null 2>&1
 
+# --- patched mali_kbase.ko (GPU DVFS container-pid crash) ---------------------
+# The stock Pixel mali_kbase oopses in gpu_dvfs_kctx_init the first time a GPU
+# context is created INSIDE the container. It resolves the calling process by
+# kctx->kprcs->tgid via find_get_pid()/get_pid_task(), but that tgid was
+# recorded in the host pid namespace and does not resolve in the container's, so
+# get_pid_task() returns NULL and the very next task->cred->uid deref panics:
+#
+#   pc : gpu_dvfs_kctx_init+0x50/0x1e8 [mali_kbase]   Comm: binder:NNN_4
+#   Kernel panic - not syncing: Oops: Fatal exception
+#
+# No display, the container respawns, and the device sits in a ~32 s reboot
+# loop. Seen on bluejay (Pixel 6a, Mali-G78); any Pixel whose mali_kbase carries
+# the same gpu_dvfs platform glue is a candidate.
+#
+# mali-kbase-fixup replaces one instruction - it loads pid 1, the container's
+# own init, instead of the caller's untranslatable tgid. It matches on a byte
+# signature rather than a file offset, verifies the match is unique, and is a
+# verified no-op when there is nothing to do, so it is safe to run on every
+# boot and on devices this does not apply to (no mali module, or a module whose
+# .text it does not recognise - it declines and says so rather than guessing).
+#
+# This has to happen here: the module has to be patched after vendor_dlkm is
+# mounted and before the container's init insmods it, and mount-android.sh is
+# android-system.service's ExecStartPre, which is exactly that window.
+#
+# The bind needs the LXC config's /vendor_dlkm entry to be rbind, not bind, or
+# the sub-mount is not carried into the container and the stock module loads
+# anyway.
+if [ -e /vendor_dlkm/lib/modules/mali_kbase.ko ]; then
+    patched_mali=/var/lib/lxc/android/mali_kbase-patched.ko
+    if mali-kbase-fixup; then
+        if mount --bind "$patched_mali" /vendor_dlkm/lib/modules/mali_kbase.ko; then
+            log "bound patched mali_kbase.ko over the stock module"
+        else
+            log "WARNING: mali_kbase.ko bind failed; the stock module will load"
+            log "WARNING: expect a GPU panic when the container touches the GPU"
+        fi
+    else
+        log "WARNING: mali-kbase-fixup declined; leaving the stock mali_kbase.ko"
+    fi
+fi
+
 try_mount_validated /odm "/etc" \
     "/dev/mapper/dynpart-odm$ab_slot_suffix" \
     "/dev/mapper/dynpart-odm" \

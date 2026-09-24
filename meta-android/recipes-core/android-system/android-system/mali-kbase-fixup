@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Patch the vendor mali_kbase.ko so GPU contexts can be created in the container.
+
+The stock Pixel mali_kbase oopses in gpu_dvfs_kctx_init the first time a GPU
+context is created inside the LXC container: it resolves the caller by
+kctx->kprcs->tgid, but that tgid was recorded in the HOST pid namespace and does
+not resolve in the container's, so get_pid_task() returns NULL and the next
+task->cred->uid deref panics. No display, container respawn loop.
+
+The fix replaces one instruction inside gpu_dvfs_kctx_init:
+
+    ldr w0, [x9]   (b9400120)   load kctx->kprcs->tgid
+    mov w0, #1     (52800020)   use pid 1 - the container's own init
+
+pid 1 always exists in a live pid namespace, so a valid task is found, uid is
+read from it (DVFS metrics attributed to init, harmless), and pd->stats is still
+set - which gpu_dvfs_kctx_term dereferences with no NULL check.
+
+Applied by signature rather than by file offset so a vendor module rebuild that
+shifts .text does not silently patch the wrong place. The signature is the
+preceding instruction plus the target, which occurs exactly once in the module.
+
+See README.md for the panic trace, the verified checksums and the two other
+parts of the deployment (the mount-android.sh bind and the LXC rbind).
+"""
+
+import os
+import sys
+
+STOCK = "/vendor_dlkm/lib/modules/mali_kbase.ko"
+OUT = "/var/lib/lxc/android/mali_kbase-patched.ko"
+
+# ldr x22, [x8, #0x40] ; ldr w0, [x9]   ->   ldr x22, [x8, #0x40] ; mov w0, #1
+SIG_OLD = bytes.fromhex("162140f9200140b9")
+SIG_NEW = bytes.fromhex("162140f920008052")
+
+
+def log(msg):
+    print("mali-kbase-fixup: %s" % msg, flush=True)
+
+
+def _sha(data):
+    """sha256 for the log line only - never let a thin python3 break the fix."""
+    try:
+        import hashlib
+    except ImportError:
+        return ""
+    return " sha256 " + hashlib.sha256(data).hexdigest()
+
+
+def main():
+    stock_path = sys.argv[1] if len(sys.argv) > 1 else STOCK
+    out_path = sys.argv[2] if len(sys.argv) > 2 else OUT
+
+    if not os.path.exists(stock_path):
+        log("no %s - nothing to patch (not a mali device?)" % stock_path)
+        return 0
+
+    with open(stock_path, "rb") as fh:
+        data = fh.read()
+
+    n_old = data.count(SIG_OLD)
+    n_new = data.count(SIG_NEW)
+
+    if n_old == 0 and n_new == 1:
+        # Already-patched module read back through an active bind mount.
+        log("%s is already patched - nothing to do" % stock_path)
+        return 0
+
+    if n_old != 1:
+        log("REFUSING: expected exactly 1 match for the patch site in %s, found %d"
+            % (stock_path, n_old))
+        log("the vendor module has changed; re-derive the signature (see README.md)")
+        log("the stock, crashing module will be used - expect a GPU panic loop")
+        return 1
+
+    patched = data.replace(SIG_OLD, SIG_NEW)
+    if patched.count(SIG_NEW) != 1 or len(patched) != len(data):
+        log("REFUSING: patch did not apply cleanly")
+        return 1
+
+    if os.path.exists(out_path):
+        with open(out_path, "rb") as fh:
+            if fh.read() == patched:
+                log("%s is already current - nothing to do" % out_path)
+                return 0
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    # Write via a temp file in the same directory so the rename is atomic and a
+    # crash mid-write can never leave a half-patched module for the container.
+    tmp = out_path + ".tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(patched)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, out_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+    log("wrote %s (%d bytes)%s" % (out_path, len(patched), _sha(patched)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
